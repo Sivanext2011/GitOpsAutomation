@@ -424,7 +424,7 @@ def push_repository(artifacts: dict[str, str], starter: StarterKitConfig, automa
         run_command(["git", "commit", "-m", f"Add {starter.project_name} DevSecOps starter kit"], workdir, env)
         commit_sha = run_command(["git", "rev-parse", "HEAD"], workdir, env)
         run_command(["git", "remote", "add", "origin", authenticated_repo_url(automation.repo_url, automation.git_username, automation.git_token)], workdir, env)
-        run_command(["git", "push", "-u", "origin", automation.git_branch], workdir, env)
+        run_command(["git", "push", "-u", "--force", "origin", automation.git_branch], workdir, env)
         return commit_sha, files
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
