@@ -1,0 +1,202 @@
+{% if config.build_environment == "gke" %}
+pipeline {
+  agent {
+    kubernetes {
+      yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: jnlp
+    image: jenkins/inbound-agent:latest
+  - name: kaniko
+    image: gcr.io/kaniko-project/executor:debug
+    command: ["sleep"]
+    args: ["infinity"]
+    volumeMounts:
+    - name: docker-config
+      mountPath: /kaniko/.docker
+  - name: tools
+    image: alpine:3.20
+    command: ["sleep"]
+    args: ["infinity"]
+  volumes:
+  - name: docker-config
+    secret:
+      secretName: {{ config.slug }}-docker-config
+      optional: true
+'''
+    }
+  }
+
+  environment {
+    IMAGE_NAME = "{{ config.registry.rstrip('/') }}/{{ config.image_name }}:${BUILD_NUMBER}"
+    LATEST_IMAGE = "{{ config.k8s_image_name }}"
+    DOCKER_REGISTRY = "{{ config.registry.split('/')[0] }}"
+    NAMESPACE = "{{ config.namespace }}"
+    TRIVY_SEVERITY = "{{ config.severity_gate }}"
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Unit Test') {
+      steps {
+        container('tools') {
+          sh '{{ config.test_command }}'
+        }
+      }
+    }
+
+    stage('Build and Push Image') {
+      steps {
+        container('kaniko') {
+          withCredentials([usernamePassword(credentialsId: '{{ config.slug }}-docker', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
+            sh '''
+              mkdir -p /kaniko/.docker
+              echo "{\"auths\":{\"${DOCKER_REGISTRY}\":{\"username\":\"${DOCKER_USER}\",\"password\":\"${DOCKER_PASSWORD}\"}}}" > /kaniko/.docker/config.json
+            '''
+            sh "/kaniko/executor --context=${WORKSPACE} --dockerfile=${WORKSPACE}/Dockerfile --destination=${IMAGE_NAME} --destination=${LATEST_IMAGE}"
+          }
+        }
+      }
+    }
+
+    stage('Dependency Scan') {
+      steps {
+        container('tools') {
+          sh 'trivy fs --exit-code 1 --severity ${TRIVY_SEVERITY} .'
+        }
+      }
+    }
+
+    stage('Container Scan') {
+      steps {
+        container('tools') {
+          sh 'trivy image --exit-code 1 --severity ${TRIVY_SEVERITY} ${IMAGE_NAME}'
+        }
+      }
+    }
+
+    stage('SBOM') {
+      steps {
+        container('tools') {
+          sh 'syft ${IMAGE_NAME} -o spdx-json=sbom.spdx.json'
+          archiveArtifacts artifacts: 'sbom.spdx.json', fingerprint: true
+        }
+      }
+    }
+
+    stage('IaC Scan') {
+      steps {
+        container('tools') {
+          sh 'checkov -d k8s --quiet'
+        }
+      }
+    }
+
+    stage('Deploy') {
+      when {
+        branch 'main'
+      }
+      steps {
+        container('tools') {
+          withCredentials([string(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_CONTENT')]) {
+            writeFile file: 'kubeconfig.generated.yaml', text: KUBECONFIG_CONTENT
+            sh 'kubectl --kubeconfig kubeconfig.generated.yaml create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl --kubeconfig kubeconfig.generated.yaml apply -f -'
+            sh 'kubectl --kubeconfig kubeconfig.generated.yaml apply -n ${NAMESPACE} -f k8s/'
+          }
+        }
+      }
+    }
+  }
+}
+{% else %}
+pipeline {
+  agent any
+
+  environment {
+    IMAGE_NAME = "{{ config.registry.rstrip('/') }}/{{ config.image_name }}:${BUILD_NUMBER}"
+    LATEST_IMAGE = "{{ config.k8s_image_name }}"
+    DOCKER_REGISTRY = "{{ config.registry.split('/')[0] }}"
+    NAMESPACE = "{{ config.namespace }}"
+    TRIVY_SEVERITY = "{{ config.severity_gate }}"
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Unit Test') {
+      steps {
+        sh '{{ config.test_command }}'
+      }
+    }
+
+    stage('Build Image') {
+      steps {
+        sh 'docker build -t ${IMAGE_NAME} .'
+        sh 'docker tag ${IMAGE_NAME} ${LATEST_IMAGE}'
+      }
+    }
+
+    stage('Dependency Scan') {
+      steps {
+        sh 'trivy fs --exit-code 1 --severity ${TRIVY_SEVERITY} .'
+      }
+    }
+
+    stage('Container Scan') {
+      steps {
+        sh 'trivy image --exit-code 1 --severity ${TRIVY_SEVERITY} ${IMAGE_NAME}'
+      }
+    }
+
+    stage('SBOM') {
+      steps {
+        sh 'syft ${IMAGE_NAME} -o spdx-json=sbom.spdx.json'
+        archiveArtifacts artifacts: 'sbom.spdx.json', fingerprint: true
+      }
+    }
+
+    stage('IaC Scan') {
+      steps {
+        sh 'checkov -d k8s --quiet'
+      }
+    }
+
+    stage('Push') {
+      when {
+        branch 'main'
+      }
+      steps {
+        withCredentials([usernamePassword(credentialsId: '{{ config.slug }}-docker', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
+          sh 'echo "$DOCKER_PASSWORD" | docker login ${DOCKER_REGISTRY} -u "$DOCKER_USER" --password-stdin'
+          sh 'docker push ${IMAGE_NAME}'
+          sh 'docker push ${LATEST_IMAGE}'
+        }
+      }
+    }
+
+    stage('Deploy') {
+      when {
+        branch 'main'
+      }
+      steps {
+        withCredentials([string(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_CONTENT')]) {
+          writeFile file: 'kubeconfig.generated.yaml', text: KUBECONFIG_CONTENT
+          sh 'kubectl --kubeconfig kubeconfig.generated.yaml create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl --kubeconfig kubeconfig.generated.yaml apply -f -'
+          sh 'kubectl --kubeconfig kubeconfig.generated.yaml apply -n ${NAMESPACE} -f k8s/'
+        }
+      }
+    }
+  }
+}
+{% endif %}

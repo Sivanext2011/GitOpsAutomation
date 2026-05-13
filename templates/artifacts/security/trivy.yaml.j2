@@ -1,0 +1,8 @@
+severity:
+  - {{ config.severity_gate.replace(',', '\n  - ') }}
+ignore-unfixed: true
+scanners:
+  - vuln
+  - secret
+  - misconfig
+

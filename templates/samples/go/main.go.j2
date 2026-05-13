@@ -1,0 +1,23 @@
+package main
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+)
+
+func writeJSON(w http.ResponseWriter, payload map[string]string) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func main() {
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]string{"service": "{{ config.project_name }}", "status": "running"})
+	})
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]string{"status": "ok"})
+	})
+	log.Fatal(http.ListenAndServe(":{{ config.app_port }}", nil))
+}
+

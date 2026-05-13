@@ -1,0 +1,52 @@
+name: DevSecOps CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  IMAGE_NAME: {{ config.k8s_image_name }}
+  TRIVY_SEVERITY: {{ config.severity_gate }}
+
+jobs:
+  build-test-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unit test
+        run: {{ config.test_command }}
+
+      - name: Build image
+        run: docker build -t "$IMAGE_NAME" .
+
+      - name: Dependency scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: {% raw %}${{ env.TRIVY_SEVERITY }}{% endraw %}
+          exit-code: "1"
+
+      - name: Container scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: {% raw %}${{ env.IMAGE_NAME }}{% endraw %}
+          severity: {% raw %}${{ env.TRIVY_SEVERITY }}{% endraw %}
+          exit-code: "1"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: {% raw %}${{ env.IMAGE_NAME }}{% endraw %}
+          output-file: sbom.spdx.json
+
+      - name: IaC scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: k8s
+

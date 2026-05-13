@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Automation Complete</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Automation complete</p>
+            <h1>{{ config.project_name }}</h1>
+          </div>
+          <a class="status link-status" href="{{ result.jenkins_job_url }}">Open Jenkins</a>
+        </header>
+
+        <section class="panel">
+          <h2>Result</h2>
+          <dl class="result-list">
+            <div>
+              <dt>Repository</dt>
+              <dd>{{ result.repo_url }}</dd>
+            </div>
+            <div>
+              <dt>Branch</dt>
+              <dd>{{ result.branch }}</dd>
+            </div>
+            <div>
+              <dt>Commit</dt>
+              <dd>{{ result.commit_sha }}</dd>
+            </div>
+            <div>
+              <dt>Jenkins job</dt>
+              <dd><a href="{{ result.jenkins_job_url }}">{{ result.jenkins_job_url }}</a></dd>
+            </div>
+            <div>
+              <dt>Build</dt>
+              <dd>{{ "Triggered" if result.build_triggered else "Configured only" }}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="panel">
+          <h2>Files pushed</h2>
+          <ul class="file-list">
+            {% for file in result.files %}
+              <li>{{ file }}</li>
+            {% endfor %}
+          </ul>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>
+

@@ -1,0 +1,17 @@
+const express = require("express");
+
+const app = express();
+const port = process.env.PORT || {{ config.app_port }};
+
+app.get("/", (_req, res) => {
+  res.json({ service: "{{ config.project_name }}", status: "running" });
+});
+
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
+app.listen(port, "0.0.0.0", () => {
+  console.log(`{{ config.project_name }} listening on ${port}`);
+});
+

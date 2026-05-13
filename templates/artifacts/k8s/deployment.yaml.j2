@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ config.slug }}
+  labels:
+    app.kubernetes.io/name: {{ config.slug }}
+spec:
+  replicas: {{ config.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ config.slug }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ config.slug }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: {{ config.slug }}
+          image: {{ config.k8s_image_name }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ config.app_port }}
+          envFrom:
+            - configMapRef:
+                name: {{ config.slug }}-config
+            - secretRef:
+                name: {{ config.slug }}-secret
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ config.app_port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ config.app_port }}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+

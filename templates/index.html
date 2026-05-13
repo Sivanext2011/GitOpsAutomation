@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DevSecOps Starter Kit Generator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Automated DevSecOps CI/CD</p>
+            <h1>Starter Kit Generator</h1>
+          </div>
+          <span class="status">Flask + Jinja2</span>
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <div class="alerts">
+              {% for category, message in messages %}
+                <p class="alert {{ category }}">{{ message }}</p>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+
+        <form action="{{ url_for('generate') }}" method="post" class="generator-form">
+          <section class="panel">
+            <h2>Project</h2>
+            <div class="grid">
+              <label>
+                <span>Project name</span>
+                <input name="project_name" value="payments-api" required>
+              </label>
+              <label>
+                <span>Repository URL</span>
+                <input name="repository_url" placeholder="https://github.com/team/repo.git">
+              </label>
+              <label>
+                <span>Runtime</span>
+                <select name="runtime" id="runtime">
+                  {% for key, runtime in runtimes.items() %}
+                    <option value="{{ key }}" data-port="{{ runtime.port }}">{{ runtime.label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                <span>CI system</span>
+                <select name="ci_system">
+                  <option value="jenkins">Jenkins</option>
+                  <option value="github-actions">GitHub Actions</option>
+                </select>
+              </label>
+              <label>
+                <span>Build environment</span>
+                <select name="build_environment">
+                  <option value="vm">VM / Docker daemon</option>
+                  <option value="gke">GKE / Kubernetes (Kaniko)</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Container and Cluster</h2>
+            <div class="grid">
+              <label>
+                <span>Container registry</span>
+                <input name="registry" value="registry.example.com/platform">
+              </label>
+              <label>
+                <span>Image name</span>
+                <input name="image_name" value="payments-api">
+              </label>
+              <label>
+                <span>Kubernetes namespace</span>
+                <input name="namespace" value="devsecops">
+              </label>
+              <label>
+                <span>Application port</span>
+                <input name="app_port" id="app_port" type="number" min="1" max="65535" value="8000">
+              </label>
+              <label>
+                <span>Replicas</span>
+                <input name="replicas" type="number" min="1" max="10" value="2">
+              </label>
+              <label>
+                <span>Vulnerability gate</span>
+                <select name="severity_gate">
+                  <option>HIGH,CRITICAL</option>
+                  <option>CRITICAL</option>
+                  <option>MEDIUM,HIGH,CRITICAL</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section class="panel checks">
+            <h2>Artifacts</h2>
+            <label><input type="checkbox" name="include_ingress" checked> Ingress</label>
+            <label><input type="checkbox" name="include_hpa" checked> Horizontal Pod Autoscaler</label>
+            <label><input type="checkbox" name="include_network_policy" checked> NetworkPolicy</label>
+          </section>
+
+          <section class="panel">
+            <h2>Git Automation</h2>
+            <div class="grid">
+              <label>
+                <span>Branch</span>
+                <input name="git_branch" value="main">
+              </label>
+              <label>
+                <span>Git username</span>
+                <input name="git_username" autocomplete="username">
+              </label>
+              <label>
+                <span>Git token</span>
+                <input name="git_token" type="password" autocomplete="off">
+              </label>
+              <label>
+                <span>Commit author name</span>
+                <input name="git_author_name" value="DevSecOps Generator">
+              </label>
+              <label>
+                <span>Commit author email</span>
+                <input name="git_author_email" value="devsecops-generator@example.com">
+              </label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Jenkins Automation</h2>
+            <div class="grid">
+              <label>
+                <span>Jenkins URL</span>
+                <input name="jenkins_url" placeholder="http://localhost:8080">
+              </label>
+              <label>
+                <span>Jenkins job name</span>
+                <input name="jenkins_job_name" value="payments-api">
+              </label>
+              <label>
+                <span>Jenkins username</span>
+                <input name="jenkins_username" autocomplete="username">
+              </label>
+              <label>
+                <span>Jenkins API token</span>
+                <input name="jenkins_token" type="password" autocomplete="off">
+              </label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Deployment Credentials</h2>
+            <div class="grid">
+              <label>
+                <span>Docker registry host</span>
+                <input name="docker_registry_host" placeholder="registry.example.com">
+              </label>
+              <label>
+                <span>Docker username</span>
+                <input name="docker_username" autocomplete="username">
+              </label>
+              <label>
+                <span>Docker password/token</span>
+                <input name="docker_password" type="password" autocomplete="off">
+              </label>
+              <label class="wide">
+                <span>Kubernetes kubeconfig</span>
+                <textarea name="kubeconfig" rows="8" spellcheck="false" placeholder="Paste kubeconfig YAML here"></textarea>
+              </label>
+            </div>
+          </section>
+
+          <section class="panel checks">
+            <h2>Run</h2>
+            <label><input type="checkbox" name="trigger_build" checked> Trigger Jenkins build after configuration</label>
+          </section>
+
+          <footer class="actions">
+            <button type="submit">Generate ZIP</button>
+            <button type="submit" formaction="{{ url_for('automate') }}">Push and Configure Jenkins</button>
+          </footer>
+        </form>
+      </section>
+    </main>
+    <script>
+      const runtime = document.querySelector("#runtime");
+      const port = document.querySelector("#app_port");
+      runtime.addEventListener("change", () => {
+        port.value = runtime.selectedOptions[0].dataset.port;
+      });
+    </script>
+  </body>
+</html>
