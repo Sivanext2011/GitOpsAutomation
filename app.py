@@ -413,18 +413,29 @@ def write_artifacts(target: str, artifacts: dict[str, str]) -> list[str]:
 def push_repository(artifacts: dict[str, str], starter: StarterKitConfig, automation: AutomationConfig) -> tuple[str, list[str]]:
     workdir = tempfile.mkdtemp(prefix="devsecops-kit-")
     try:
-        files = write_artifacts(workdir, artifacts)
         env = os.environ.copy()
         env["GIT_TERMINAL_PROMPT"] = "0"
-        run_command(["git", "init"], workdir, env)
-        run_command(["git", "checkout", "-B", automation.git_branch], workdir, env)
+        auth_url = authenticated_repo_url(automation.repo_url, automation.git_username, automation.git_token)
+
+        # Clone existing repo to preserve user's source code
+        try:
+            run_command(["git", "clone", "--branch", automation.git_branch, "--single-branch", auth_url, "."], workdir, env)
+        except RuntimeError:
+            # Branch or repo may be empty; init fresh
+            run_command(["git", "init"], workdir, env)
+            run_command(["git", "checkout", "-B", automation.git_branch], workdir, env)
+            run_command(["git", "remote", "add", "origin", auth_url], workdir, env)
+
         run_command(["git", "config", "user.name", automation.git_author_name], workdir, env)
         run_command(["git", "config", "user.email", automation.git_author_email], workdir, env)
+
+        # Write only CI/CD artifacts on top of existing code
+        files = write_artifacts(workdir, artifacts)
+
         run_command(["git", "add", "."], workdir, env)
         run_command(["git", "commit", "-m", f"Add {starter.project_name} DevSecOps starter kit"], workdir, env)
         commit_sha = run_command(["git", "rev-parse", "HEAD"], workdir, env)
-        run_command(["git", "remote", "add", "origin", authenticated_repo_url(automation.repo_url, automation.git_username, automation.git_token)], workdir, env)
-        run_command(["git", "push", "-u", "--force", "origin", automation.git_branch], workdir, env)
+        run_command(["git", "push", "origin", automation.git_branch], workdir, env)
         return commit_sha, files
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -580,7 +591,7 @@ def create_or_update_jenkins_job(starter: StarterKitConfig, automation: Automati
 
 def run_full_automation(starter: StarterKitConfig, automation: AutomationConfig, modules: list[ModuleConfig] | None = None) -> AutomationResult:
     artifacts = render_artifacts(starter, modules)
-    add_sample_application(artifacts, starter)
+    # Do NOT add sample application code — the repo already has user's source code
     commit_sha, files = push_repository(artifacts, starter, automation)
     job_url = create_or_update_jenkins_job(starter, automation)
     return AutomationResult(
