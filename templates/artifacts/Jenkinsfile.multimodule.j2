@@ -30,9 +30,8 @@ spec:
   }
 
   environment {
-    IMAGE_NAME = "{{ config.registry.rstrip('/') }}/{{ config.image_name }}:${BUILD_NUMBER}"
-    LATEST_IMAGE = "{{ config.k8s_image_name }}"
     DOCKER_REGISTRY = "{{ config.registry.split('/')[0] }}"
+    REGISTRY_PREFIX = "{{ config.registry.rstrip('/') }}"
     NAMESPACE = "{{ config.namespace }}"
     TRIVY_SEVERITY = "{{ config.severity_gate }}"
   }
@@ -43,24 +42,20 @@ spec:
         checkout scm
       }
     }
+{% for module in modules %}
 
-    stage('Install Dependencies') {
+    stage('Test {{ module.name }}') {
       steps {
         container('tools') {
-          sh '{{ config.install_command }}'
+          dir('{{ module.path }}') {
+            sh '{{ module.install_command }}'
+            sh '{{ module.test_command }}'
+          }
         }
       }
     }
 
-    stage('Unit Test') {
-      steps {
-        container('tools') {
-          sh '{{ config.test_command }}'
-        }
-      }
-    }
-
-    stage('Build and Push Image') {
+    stage('Build {{ module.name }}') {
       steps {
         container('kaniko') {
           withCredentials([usernamePassword(credentialsId: '{{ config.slug }}-docker', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
@@ -68,11 +63,12 @@ spec:
               mkdir -p /kaniko/.docker
               echo "{\"auths\":{\"${DOCKER_REGISTRY}\":{\"username\":\"${DOCKER_USER}\",\"password\":\"${DOCKER_PASSWORD}\"}}}" > /kaniko/.docker/config.json
             '''
-            sh "/kaniko/executor --context=${WORKSPACE} --dockerfile=${WORKSPACE}/Dockerfile --destination=${IMAGE_NAME} --destination=${LATEST_IMAGE}"
+            sh "/kaniko/executor --context=${WORKSPACE}/{{ module.path }} --dockerfile=${WORKSPACE}/{{ module.path }}/Dockerfile --destination=${REGISTRY_PREFIX}/{{ module.image }}:${BUILD_NUMBER} --destination=${REGISTRY_PREFIX}/{{ module.image }}:latest"
           }
         }
       }
     }
+{% endfor %}
 
     stage('Dependency Scan') {
       steps {
@@ -85,7 +81,9 @@ spec:
     stage('Container Scan') {
       steps {
         container('tools') {
-          sh 'trivy image --exit-code 1 --severity ${TRIVY_SEVERITY} ${IMAGE_NAME}'
+{% for module in modules %}
+          sh "trivy image --exit-code 1 --severity ${TRIVY_SEVERITY} ${REGISTRY_PREFIX}/{{ module.image }}:${BUILD_NUMBER}"
+{% endfor %}
         }
       }
     }
@@ -93,8 +91,10 @@ spec:
     stage('SBOM') {
       steps {
         container('tools') {
-          sh 'syft ${IMAGE_NAME} -o spdx-json=sbom.spdx.json'
-          archiveArtifacts artifacts: 'sbom.spdx.json', fingerprint: true
+{% for module in modules %}
+          sh "syft ${REGISTRY_PREFIX}/{{ module.image }}:${BUILD_NUMBER} -o spdx-json=sbom-{{ module.name }}.spdx.json"
+{% endfor %}
+          archiveArtifacts artifacts: 'sbom-*.spdx.json', fingerprint: true
         }
       }
     }
@@ -128,9 +128,8 @@ pipeline {
   agent any
 
   environment {
-    IMAGE_NAME = "{{ config.registry.rstrip('/') }}/{{ config.image_name }}:${BUILD_NUMBER}"
-    LATEST_IMAGE = "{{ config.k8s_image_name }}"
     DOCKER_REGISTRY = "{{ config.registry.split('/')[0] }}"
+    REGISTRY_PREFIX = "{{ config.registry.rstrip('/') }}"
     NAMESPACE = "{{ config.namespace }}"
     TRIVY_SEVERITY = "{{ config.severity_gate }}"
   }
@@ -141,25 +140,23 @@ pipeline {
         checkout scm
       }
     }
+{% for module in modules %}
 
-    stage('Install Dependencies') {
+    stage('Test {{ module.name }}') {
       steps {
-        sh '{{ config.install_command }}'
+        dir('{{ module.path }}') {
+          sh '{{ module.install_command }}'
+          sh '{{ module.test_command }}'
+        }
       }
     }
 
-    stage('Unit Test') {
+    stage('Build {{ module.name }}') {
       steps {
-        sh '{{ config.test_command }}'
+        sh "docker build -t ${REGISTRY_PREFIX}/{{ module.image }}:${BUILD_NUMBER} -t ${REGISTRY_PREFIX}/{{ module.image }}:latest {{ module.path }}"
       }
     }
-
-    stage('Build Image') {
-      steps {
-        sh 'docker build -t ${IMAGE_NAME} .'
-        sh 'docker tag ${IMAGE_NAME} ${LATEST_IMAGE}'
-      }
-    }
+{% endfor %}
 
     stage('Dependency Scan') {
       steps {
@@ -169,14 +166,18 @@ pipeline {
 
     stage('Container Scan') {
       steps {
-        sh 'trivy image --exit-code 1 --severity ${TRIVY_SEVERITY} ${IMAGE_NAME}'
+{% for module in modules %}
+        sh "trivy image --exit-code 1 --severity ${TRIVY_SEVERITY} ${REGISTRY_PREFIX}/{{ module.image }}:${BUILD_NUMBER}"
+{% endfor %}
       }
     }
 
     stage('SBOM') {
       steps {
-        sh 'syft ${IMAGE_NAME} -o spdx-json=sbom.spdx.json'
-        archiveArtifacts artifacts: 'sbom.spdx.json', fingerprint: true
+{% for module in modules %}
+        sh "syft ${REGISTRY_PREFIX}/{{ module.image }}:${BUILD_NUMBER} -o spdx-json=sbom-{{ module.name }}.spdx.json"
+{% endfor %}
+        archiveArtifacts artifacts: 'sbom-*.spdx.json', fingerprint: true
       }
     }
 
@@ -193,8 +194,10 @@ pipeline {
       steps {
         withCredentials([usernamePassword(credentialsId: '{{ config.slug }}-docker', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
           sh 'echo "$DOCKER_PASSWORD" | docker login ${DOCKER_REGISTRY} -u "$DOCKER_USER" --password-stdin'
-          sh 'docker push ${IMAGE_NAME}'
-          sh 'docker push ${LATEST_IMAGE}'
+{% for module in modules %}
+          sh "docker push ${REGISTRY_PREFIX}/{{ module.image }}:${BUILD_NUMBER}"
+          sh "docker push ${REGISTRY_PREFIX}/{{ module.image }}:latest"
+{% endfor %}
         }
       }
     }

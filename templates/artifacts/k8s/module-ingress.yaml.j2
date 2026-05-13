@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ config.slug }}
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: {{ config.slug }}.example.com
+      http:
+        paths:
+{% for module in modules %}
+          - path: /{{ module.name }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ module.name }}
+                port:
+                  number: 80
+{% endfor %}

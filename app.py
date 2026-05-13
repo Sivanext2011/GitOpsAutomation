@@ -26,6 +26,7 @@ RUNTIMES: dict[str, dict[str, Any]] = {
         "label": "Python Flask",
         "port": 8000,
         "docker_template": "artifacts/dockerfile.python.j2",
+        "install_command": "pip install -r requirements.txt",
         "test_command": "python -m pytest",
         "build_context": ".",
     },
@@ -33,6 +34,7 @@ RUNTIMES: dict[str, dict[str, Any]] = {
         "label": "Node.js",
         "port": 3000,
         "docker_template": "artifacts/dockerfile.node.j2",
+        "install_command": "npm ci",
         "test_command": "npm test",
         "build_context": ".",
     },
@@ -40,6 +42,7 @@ RUNTIMES: dict[str, dict[str, Any]] = {
         "label": "Java Spring Boot",
         "port": 8080,
         "docker_template": "artifacts/dockerfile.java.j2",
+        "install_command": "mvn dependency:resolve",
         "test_command": "mvn test",
         "build_context": ".",
     },
@@ -47,6 +50,7 @@ RUNTIMES: dict[str, dict[str, Any]] = {
         "label": "Go",
         "port": 8080,
         "docker_template": "artifacts/dockerfile.go.j2",
+        "install_command": "go mod download",
         "test_command": "go test ./...",
         "build_context": ".",
     },
@@ -97,6 +101,31 @@ class StarterKitConfig:
     @property
     def test_command(self) -> str:
         return RUNTIMES[self.runtime]["test_command"]
+
+    @property
+    def install_command(self) -> str:
+        return RUNTIMES[self.runtime]["install_command"]
+
+
+@dataclass(frozen=True)
+class ModuleConfig:
+    name: str
+    runtime: str
+    path: str
+    port: int
+    image: str
+
+    @property
+    def test_command(self) -> str:
+        return RUNTIMES[self.runtime]["test_command"]
+
+    @property
+    def install_command(self) -> str:
+        return RUNTIMES[self.runtime]["install_command"]
+
+    @property
+    def runtime_label(self) -> str:
+        return RUNTIMES[self.runtime]["label"]
 
 
 @dataclass(frozen=True)
@@ -236,8 +265,38 @@ def parse_automation_config(form: dict[str, str], starter: StarterKitConfig) -> 
     return (None, errors) if errors else (automation, [])
 
 
-def render_artifacts(config: StarterKitConfig) -> dict[str, str]:
+def parse_modules(form: dict[str, str]) -> list[ModuleConfig]:
+    """Parse dynamically added modules from the form."""
+    modules: list[ModuleConfig] = []
+    names = form.getlist("module_name") if hasattr(form, "getlist") else []
+    runtimes = form.getlist("module_runtime") if hasattr(form, "getlist") else []
+    paths = form.getlist("module_path") if hasattr(form, "getlist") else []
+    ports = form.getlist("module_port") if hasattr(form, "getlist") else []
+    images = form.getlist("module_image") if hasattr(form, "getlist") else []
+
+    for i in range(len(names)):
+        name = normalize_name(names[i] if i < len(names) else "", "")
+        if not name:
+            continue
+        runtime = runtimes[i] if i < len(runtimes) else "python"
+        if runtime not in RUNTIMES:
+            runtime = "python"
+        path = (paths[i] if i < len(paths) else name).strip() or name
+        try:
+            port = int(ports[i]) if i < len(ports) and ports[i] else RUNTIMES[runtime]["port"]
+        except ValueError:
+            port = RUNTIMES[runtime]["port"]
+        image = normalize_name(images[i] if i < len(images) else "", name)
+        modules.append(ModuleConfig(name=name, runtime=runtime, path=path, port=port, image=image))
+    return modules
+
+
+def render_artifacts(config: StarterKitConfig, modules: list[ModuleConfig] | None = None) -> dict[str, str]:
     context = {"config": config, "runtimes": RUNTIMES}
+
+    if modules and len(modules) > 1:
+        return render_multimodule_artifacts(config, modules)
+
     artifacts = {
         "Dockerfile": render_template(RUNTIMES[config.runtime]["docker_template"], **context),
         "README.md": render_template("artifacts/readme.md.j2", **context),
@@ -261,6 +320,42 @@ def render_artifacts(config: StarterKitConfig) -> dict[str, str]:
         artifacts["k8s/hpa.yaml"] = render_template("artifacts/k8s/hpa.yaml.j2", **context)
     if config.include_network_policy:
         artifacts["k8s/networkpolicy.yaml"] = render_template("artifacts/k8s/networkpolicy.yaml.j2", **context)
+
+    return artifacts
+
+
+def render_multimodule_artifacts(config: StarterKitConfig, modules: list[ModuleConfig]) -> dict[str, str]:
+    """Generate artifacts for a multi-module repo (e.g. frontend + backend)."""
+    context = {"config": config, "runtimes": RUNTIMES, "modules": modules}
+    artifacts: dict[str, str] = {
+        "security/trivy.yaml": render_template("artifacts/security/trivy.yaml.j2", **context),
+        "security/checkov.yaml": render_template("artifacts/security/checkov.yaml.j2", **context),
+    }
+
+    # Per-module: Dockerfile, K8s manifests
+    for module in modules:
+        mod_ctx = {"config": config, "module": module, "runtimes": RUNTIMES}
+        artifacts[f"{module.path}/Dockerfile"] = render_template(RUNTIMES[module.runtime]["docker_template"], config=config, **mod_ctx)
+        artifacts[f"{module.path}/.dockerignore"] = render_template("artifacts/dockerignore.j2", **mod_ctx)
+        artifacts[f"k8s/{module.name}-deployment.yaml"] = render_template("artifacts/k8s/module-deployment.yaml.j2", **mod_ctx)
+        artifacts[f"k8s/{module.name}-service.yaml"] = render_template("artifacts/k8s/module-service.yaml.j2", **mod_ctx)
+        artifacts[f"k8s/{module.name}-configmap.yaml"] = render_template("artifacts/k8s/module-configmap.yaml.j2", **mod_ctx)
+        artifacts[f"k8s/{module.name}-secret.example.yaml"] = render_template("artifacts/k8s/module-secret.example.yaml.j2", **mod_ctx)
+        if config.include_hpa:
+            artifacts[f"k8s/{module.name}-hpa.yaml"] = render_template("artifacts/k8s/module-hpa.yaml.j2", **mod_ctx)
+
+    # Shared ingress routing to all modules
+    if config.include_ingress:
+        artifacts["k8s/ingress.yaml"] = render_template("artifacts/k8s/module-ingress.yaml.j2", **context)
+
+    if config.include_network_policy:
+        artifacts["k8s/networkpolicy.yaml"] = render_template("artifacts/k8s/networkpolicy.yaml.j2", **context)
+
+    # Unified pipeline
+    if config.ci_system == "jenkins":
+        artifacts["Jenkinsfile"] = render_template("artifacts/Jenkinsfile.multimodule.j2", **context)
+    else:
+        artifacts[CI_SYSTEMS[config.ci_system]] = render_template("artifacts/github-actions.yml.j2", **context)
 
     return artifacts
 
@@ -483,8 +578,8 @@ def create_or_update_jenkins_job(starter: StarterKitConfig, automation: Automati
     return f"{automation.jenkins_url}/job/{urllib.parse.quote(automation.jenkins_job_name, safe='')}/"
 
 
-def run_full_automation(starter: StarterKitConfig, automation: AutomationConfig) -> AutomationResult:
-    artifacts = render_artifacts(starter)
+def run_full_automation(starter: StarterKitConfig, automation: AutomationConfig, modules: list[ModuleConfig] | None = None) -> AutomationResult:
+    artifacts = render_artifacts(starter, modules)
     add_sample_application(artifacts, starter)
     commit_sha, files = push_repository(artifacts, starter, automation)
     job_url = create_or_update_jenkins_job(starter, automation)
@@ -511,7 +606,8 @@ def generate() -> Response:
             flash(error, "error")
         return redirect(url_for("index"))
 
-    artifacts = render_artifacts(config)
+    modules = parse_modules(request.form)
+    artifacts = render_artifacts(config, modules)
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as kit:
         for path, content in artifacts.items():
@@ -541,7 +637,8 @@ def automate() -> str | Response:
         return redirect(url_for("index"))
 
     try:
-        result = run_full_automation(starter, automation)
+        modules = parse_modules(request.form)
+        result = run_full_automation(starter, automation, modules)
     except Exception as exc:
         flash(str(exc), "error")
         return redirect(url_for("index"))

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ module.name }}-config
+  labels:
+    app.kubernetes.io/name: {{ module.name }}
+    app.kubernetes.io/part-of: {{ config.slug }}
+data:
+  APP_PORT: "{{ module.port }}"
+  APP_ENV: production

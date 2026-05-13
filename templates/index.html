@@ -98,6 +98,13 @@
             </div>
           </section>
 
+          <section class="panel">
+            <h2>Modules <small>(for multi-image repos)</small></h2>
+            <p style="font-size:0.85em;color:#666;">Add modules if your repo has multiple services (e.g. frontend, backend). Leave empty for single-image projects.</p>
+            <div id="modules-container"></div>
+            <button type="button" id="add-module" style="margin-top:0.5rem;">+ Add Module</button>
+          </section>
+
           <section class="panel checks">
             <h2>Artifacts</h2>
             <label><input type="checkbox" name="include_ingress" checked> Ingress</label>
@@ -192,6 +199,27 @@
       const port = document.querySelector("#app_port");
       runtime.addEventListener("change", () => {
         port.value = runtime.selectedOptions[0].dataset.port;
+      });
+
+      const modulesContainer = document.querySelector("#modules-container");
+      const addModuleBtn = document.querySelector("#add-module");
+      const runtimeOptions = `{% for key, rt in runtimes.items() %}<option value="{{ key }}" data-port="{{ rt.port }}">{{ rt.label }}</option>{% endfor %}`;
+      let moduleCount = 0;
+
+      addModuleBtn.addEventListener("click", () => {
+        moduleCount++;
+        const div = document.createElement("div");
+        div.className = "grid";
+        div.style.marginBottom = "0.75rem";
+        div.innerHTML = `
+          <label><span>Name</span><input name="module_name" placeholder="e.g. backend" required></label>
+          <label><span>Runtime</span><select name="module_runtime">${runtimeOptions}</select></label>
+          <label><span>Subdirectory</span><input name="module_path" placeholder="e.g. backend/"></label>
+          <label><span>Port</span><input name="module_port" type="number" min="1" max="65535" value="8080"></label>
+          <label><span>Image name</span><input name="module_image" placeholder="e.g. myapp-backend"></label>
+          <button type="button" onclick="this.parentElement.remove()" style="align-self:end;">Remove</button>
+        `;
+        modulesContainer.appendChild(div);
       });
     </script>
   </body>
