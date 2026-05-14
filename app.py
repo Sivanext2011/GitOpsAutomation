@@ -79,6 +79,7 @@ class StarterKitConfig:
     include_network_policy: bool
     skip_vuln_scan: bool
     deploy_branch: str
+    kubeconfig_path: str
     build_environment: str  # "vm" or "gke"
 
     @property
@@ -218,6 +219,7 @@ def parse_config(form: dict[str, str]) -> tuple[StarterKitConfig | None, list[st
         include_network_policy=form.get("include_network_policy") == "on",
         skip_vuln_scan=form.get("skip_vuln_scan") == "on",
         deploy_branch=normalize_name(form.get("git_branch", ""), "main"),
+        kubeconfig_path=form.get("kubeconfig", "").strip() or "/var/jenkins_home/.kube/config",
         build_environment=build_environment,
     )
     return (None, errors) if errors else (config, [])
@@ -238,7 +240,6 @@ def parse_automation_config(form: dict[str, str], starter: StarterKitConfig) -> 
         "Jenkins API token": form.get("jenkins_token", "").strip(),
         "Docker username": form.get("docker_username", "").strip(),
         "Docker password/token": form.get("docker_password", "").strip(),
-        "Kubeconfig": form.get("kubeconfig", "").strip(),
     }
     for label, value in required.items():
         if not value:
@@ -628,7 +629,6 @@ def create_or_update_file_credential(
 def create_or_update_jenkins_job(starter: StarterKitConfig, automation: AutomationConfig) -> str:
     create_or_update_credential(automation, f"{starter.slug}-git", "Git token for generated DevSecOps job", automation.git_username, automation.git_token)
     create_or_update_credential(automation, f"{starter.slug}-docker", "Docker registry credentials", automation.docker_username, automation.docker_password)
-    create_or_update_credential(automation, f"{starter.slug}-kubeconfig", "Kubernetes kubeconfig", None, automation.kubeconfig)
 
     job_name = urllib.parse.quote(automation.jenkins_job_name, safe="")
     config_xml = jenkins_job_xml(starter, automation)
