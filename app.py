@@ -576,10 +576,59 @@ def jenkins_job_xml(starter: StarterKitConfig, automation: AutomationConfig) -> 
     return xml.encode("utf-8")
 
 
+def create_or_update_file_credential(
+    automation: AutomationConfig,
+    credential_id: str,
+    description: str,
+    filename: str,
+    content: str,
+) -> None:
+    """Create a SecretFile credential in Jenkins using multipart form upload."""
+    import json
+    delete_path = f"/credentials/store/system/domain/_/credential/{urllib.parse.quote(credential_id, safe='')}/doDelete"
+    try:
+        jenkins_request(automation, delete_path, method="POST", data=b"")
+    except RuntimeError:
+        pass
+
+    boundary = "----FormBoundary7MA4YWxkTrZu0gW"
+    body_parts = []
+    # JSON payload
+    json_payload = json.dumps({
+        "": "0",
+        "credentials": {
+            "scope": "GLOBAL",
+            "id": credential_id,
+            "description": description,
+            "file": "secret",
+            "stapler-class": "org.jenkinsci.plugins.plaincredentials.impl.FileCredentialsImpl",
+            "$class": "org.jenkinsci.plugins.plaincredentials.impl.FileCredentialsImpl",
+        }
+    })
+    body_parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"json\"\r\n\r\n{json_payload}\r\n")
+    # File part
+    body_parts.append(
+        f"--{boundary}\r\n"
+        f"Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+        f"Content-Type: application/octet-stream\r\n\r\n"
+        f"{content}\r\n"
+    )
+    body_parts.append(f"--{boundary}--\r\n")
+    body = "".join(body_parts).encode("utf-8")
+
+    jenkins_request(
+        automation,
+        "/credentials/store/system/domain/_/createCredentials",
+        method="POST",
+        data=body,
+        content_type=f"multipart/form-data; boundary={boundary}",
+    )
+
+
 def create_or_update_jenkins_job(starter: StarterKitConfig, automation: AutomationConfig) -> str:
     create_or_update_credential(automation, f"{starter.slug}-git", "Git token for generated DevSecOps job", automation.git_username, automation.git_token)
     create_or_update_credential(automation, f"{starter.slug}-docker", "Docker registry credentials", automation.docker_username, automation.docker_password)
-    create_or_update_credential(automation, f"{starter.slug}-kubeconfig", "Kubernetes kubeconfig", None, automation.kubeconfig)
+    create_or_update_file_credential(automation, f"{starter.slug}-kubeconfig", "Kubernetes kubeconfig", "kubeconfig.yaml", automation.kubeconfig)
 
     job_name = urllib.parse.quote(automation.jenkins_job_name, safe="")
     config_xml = jenkins_job_xml(starter, automation)

@@ -112,11 +112,9 @@ spec:
     stage('Deploy') {
       steps {
         container('tools') {
-          withCredentials([string(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_CONTENT')]) {
-            writeFile file: 'kubeconfig.generated.yaml', text: KUBECONFIG_CONTENT
-            sh 'kubectl --kubeconfig kubeconfig.generated.yaml create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl --kubeconfig kubeconfig.generated.yaml apply --validate=false -f -'
-            sh 'kubectl --kubeconfig kubeconfig.generated.yaml apply -n ${NAMESPACE} -f k8s/generated/'
-            sh 'rm -f kubeconfig.generated.yaml'
+          withCredentials([file(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_FILE')]) {
+            sh 'kubectl --kubeconfig $KUBECONFIG_FILE create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl --kubeconfig $KUBECONFIG_FILE apply --validate=false -f -'
+            sh 'kubectl --kubeconfig $KUBECONFIG_FILE apply -n ${NAMESPACE} -f k8s/generated/'
           }
         }
       }
@@ -200,11 +198,9 @@ pipeline {
 
     stage('Deploy') {
       steps {
-        withCredentials([string(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_CONTENT')]) {
-          writeFile file: 'kubeconfig.generated.yaml', text: KUBECONFIG_CONTENT
-          sh 'kubectl --kubeconfig kubeconfig.generated.yaml create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl --kubeconfig kubeconfig.generated.yaml apply --validate=false -f -'
-          sh 'kubectl --kubeconfig kubeconfig.generated.yaml apply -n ${NAMESPACE} -f k8s/generated/'
-          sh 'rm -f kubeconfig.generated.yaml'
+        withCredentials([file(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_FILE')]) {
+          sh 'kubectl --kubeconfig $KUBECONFIG_FILE create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl --kubeconfig $KUBECONFIG_FILE apply --validate=false -f -'
+          sh 'kubectl --kubeconfig $KUBECONFIG_FILE apply -n ${NAMESPACE} -f k8s/generated/'
         }
       }
     }
