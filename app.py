@@ -304,10 +304,10 @@ def render_artifacts(config: StarterKitConfig, modules: list[ModuleConfig] | Non
     artifacts = {
         "Dockerfile": render_template(RUNTIMES[config.runtime]["docker_template"], **context),
         "README.md": render_template("artifacts/readme.md.j2", **context),
-        "k8s/deployment.yaml": render_template("artifacts/k8s/deployment.yaml.j2", **context),
-        "k8s/service.yaml": render_template("artifacts/k8s/service.yaml.j2", **context),
-        "k8s/configmap.yaml": render_template("artifacts/k8s/configmap.yaml.j2", **context),
-        "k8s/secret.example.yaml": render_template("artifacts/k8s/secret.example.yaml.j2", **context),
+        "k8s/generated/deployment.yaml": render_template("artifacts/k8s/deployment.yaml.j2", **context),
+        "k8s/generated/service.yaml": render_template("artifacts/k8s/service.yaml.j2", **context),
+        "k8s/generated/configmap.yaml": render_template("artifacts/k8s/configmap.yaml.j2", **context),
+        "k8s/generated/secret.example.yaml": render_template("artifacts/k8s/secret.example.yaml.j2", **context),
         "security/trivy.yaml": render_template("artifacts/security/trivy.yaml.j2", **context),
         "security/checkov.yaml": render_template("artifacts/security/checkov.yaml.j2", **context),
         ".checkov.yaml": render_template("artifacts/checkov.yaml.j2", **context),
@@ -320,11 +320,11 @@ def render_artifacts(config: StarterKitConfig, modules: list[ModuleConfig] | Non
         artifacts[CI_SYSTEMS[config.ci_system]] = render_template("artifacts/github-actions.yml.j2", **context)
 
     if config.include_ingress:
-        artifacts["k8s/ingress.yaml"] = render_template("artifacts/k8s/ingress.yaml.j2", **context)
+        artifacts["k8s/generated/ingress.yaml"] = render_template("artifacts/k8s/ingress.yaml.j2", **context)
     if config.include_hpa:
-        artifacts["k8s/hpa.yaml"] = render_template("artifacts/k8s/hpa.yaml.j2", **context)
+        artifacts["k8s/generated/hpa.yaml"] = render_template("artifacts/k8s/hpa.yaml.j2", **context)
     if config.include_network_policy:
-        artifacts["k8s/networkpolicy.yaml"] = render_template("artifacts/k8s/networkpolicy.yaml.j2", **context)
+        artifacts["k8s/generated/networkpolicy.yaml"] = render_template("artifacts/k8s/networkpolicy.yaml.j2", **context)
 
     return artifacts
 
@@ -343,19 +343,19 @@ def render_multimodule_artifacts(config: StarterKitConfig, modules: list[ModuleC
         mod_ctx = {"config": config, "module": module, "runtimes": RUNTIMES}
         artifacts[f"{module.path}/Dockerfile"] = render_template(RUNTIMES[module.runtime]["docker_template"], config=config, **mod_ctx)
         artifacts[f"{module.path}/.dockerignore"] = render_template("artifacts/dockerignore.j2", **mod_ctx)
-        artifacts[f"k8s/{module.name}-deployment.yaml"] = render_template("artifacts/k8s/module-deployment.yaml.j2", **mod_ctx)
-        artifacts[f"k8s/{module.name}-service.yaml"] = render_template("artifacts/k8s/module-service.yaml.j2", **mod_ctx)
-        artifacts[f"k8s/{module.name}-configmap.yaml"] = render_template("artifacts/k8s/module-configmap.yaml.j2", **mod_ctx)
-        artifacts[f"k8s/{module.name}-secret.example.yaml"] = render_template("artifacts/k8s/module-secret.example.yaml.j2", **mod_ctx)
+        artifacts[f"k8s/generated/{module.name}-deployment.yaml"] = render_template("artifacts/k8s/module-deployment.yaml.j2", **mod_ctx)
+        artifacts[f"k8s/generated/{module.name}-service.yaml"] = render_template("artifacts/k8s/module-service.yaml.j2", **mod_ctx)
+        artifacts[f"k8s/generated/{module.name}-configmap.yaml"] = render_template("artifacts/k8s/module-configmap.yaml.j2", **mod_ctx)
+        artifacts[f"k8s/generated/{module.name}-secret.example.yaml"] = render_template("artifacts/k8s/module-secret.example.yaml.j2", **mod_ctx)
         if config.include_hpa:
-            artifacts[f"k8s/{module.name}-hpa.yaml"] = render_template("artifacts/k8s/module-hpa.yaml.j2", **mod_ctx)
+            artifacts[f"k8s/generated/{module.name}-hpa.yaml"] = render_template("artifacts/k8s/module-hpa.yaml.j2", **mod_ctx)
 
     # Shared ingress routing to all modules
     if config.include_ingress:
-        artifacts["k8s/ingress.yaml"] = render_template("artifacts/k8s/module-ingress.yaml.j2", **context)
+        artifacts["k8s/generated/ingress.yaml"] = render_template("artifacts/k8s/module-ingress.yaml.j2", **context)
 
     if config.include_network_policy:
-        artifacts["k8s/networkpolicy.yaml"] = render_template("artifacts/k8s/networkpolicy.yaml.j2", **context)
+        artifacts["k8s/generated/networkpolicy.yaml"] = render_template("artifacts/k8s/networkpolicy.yaml.j2", **context)
 
     # Unified pipeline
     if config.ci_system == "jenkins":

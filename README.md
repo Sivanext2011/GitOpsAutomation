@@ -2,6 +2,8 @@
 
 This project implements the Flask-based generator described in the report. It collects application metadata and produces a downloadable starter kit containing container, CI/CD, Kubernetes, and security scanning artifacts.
 
+For a full project walkthrough, including architecture, routes, generated artifacts, automation flow, security notes, and troubleshooting, see [`PROJECT_DOCUMENTATION.md`](PROJECT_DOCUMENTATION.md).
+
 ## Features
 
 - Runtime-aware Dockerfiles for Python, Node.js, Java, and Go
