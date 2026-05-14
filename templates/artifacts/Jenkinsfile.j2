@@ -35,7 +35,6 @@ spec:
     DOCKER_REGISTRY = "{{ config.registry.split('/')[0] }}"
     NAMESPACE = "{{ config.namespace }}"
     TRIVY_SEVERITY = "{{ config.severity_gate }}"
-    KUBECONFIG = "{{ config.kubeconfig_path }}"
   }
 
   stages {
@@ -113,8 +112,12 @@ spec:
     stage('Deploy') {
       steps {
         container('tools') {
-          sh 'kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply --validate=false -f -'
-          sh 'kubectl apply -n ${NAMESPACE} -f k8s/generated/'
+          withCredentials([string(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_CONTENT')]) {
+            writeFile file: 'kubeconfig.generated.yaml', text: KUBECONFIG_CONTENT
+            sh 'kubectl --kubeconfig kubeconfig.generated.yaml create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl --kubeconfig kubeconfig.generated.yaml apply --validate=false -f -'
+            sh 'kubectl --kubeconfig kubeconfig.generated.yaml apply -n ${NAMESPACE} -f k8s/generated/'
+            sh 'rm -f kubeconfig.generated.yaml'
+          }
         }
       }
     }
@@ -130,7 +133,6 @@ pipeline {
     DOCKER_REGISTRY = "{{ config.registry.split('/')[0] }}"
     NAMESPACE = "{{ config.namespace }}"
     TRIVY_SEVERITY = "{{ config.severity_gate }}"
-    KUBECONFIG = "{{ config.kubeconfig_path }}"
   }
 
   stages {
@@ -198,8 +200,12 @@ pipeline {
 
     stage('Deploy') {
       steps {
-        sh 'kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply --validate=false -f -'
-        sh 'kubectl apply -n ${NAMESPACE} -f k8s/generated/'
+        withCredentials([string(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_CONTENT')]) {
+          writeFile file: 'kubeconfig.generated.yaml', text: KUBECONFIG_CONTENT
+          sh 'kubectl --kubeconfig kubeconfig.generated.yaml create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl --kubeconfig kubeconfig.generated.yaml apply --validate=false -f -'
+          sh 'kubectl --kubeconfig kubeconfig.generated.yaml apply -n ${NAMESPACE} -f k8s/generated/'
+          sh 'rm -f kubeconfig.generated.yaml'
+        }
       }
     }
   }
