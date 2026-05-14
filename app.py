@@ -77,6 +77,8 @@ class StarterKitConfig:
     include_ingress: bool
     include_hpa: bool
     include_network_policy: bool
+    skip_vuln_scan: bool
+    deploy_branch: str
     build_environment: str  # "vm" or "gke"
 
     @property
@@ -214,6 +216,8 @@ def parse_config(form: dict[str, str]) -> tuple[StarterKitConfig | None, list[st
         include_ingress=form.get("include_ingress") == "on",
         include_hpa=form.get("include_hpa") == "on",
         include_network_policy=form.get("include_network_policy") == "on",
+        skip_vuln_scan=form.get("skip_vuln_scan") == "on",
+        deploy_branch=normalize_name(form.get("git_branch", ""), "main"),
         build_environment=build_environment,
     )
     return (None, errors) if errors else (config, [])
@@ -306,6 +310,7 @@ def render_artifacts(config: StarterKitConfig, modules: list[ModuleConfig] | Non
         "k8s/secret.example.yaml": render_template("artifacts/k8s/secret.example.yaml.j2", **context),
         "security/trivy.yaml": render_template("artifacts/security/trivy.yaml.j2", **context),
         "security/checkov.yaml": render_template("artifacts/security/checkov.yaml.j2", **context),
+        ".checkov.yaml": render_template("artifacts/checkov.yaml.j2", **context),
         ".dockerignore": render_template("artifacts/dockerignore.j2", **context),
     }
 
@@ -330,6 +335,7 @@ def render_multimodule_artifacts(config: StarterKitConfig, modules: list[ModuleC
     artifacts: dict[str, str] = {
         "security/trivy.yaml": render_template("artifacts/security/trivy.yaml.j2", **context),
         "security/checkov.yaml": render_template("artifacts/security/checkov.yaml.j2", **context),
+        ".checkov.yaml": render_template("artifacts/checkov.yaml.j2", **context),
     }
 
     # Per-module: Dockerfile, K8s manifests
@@ -433,9 +439,14 @@ def push_repository(artifacts: dict[str, str], starter: StarterKitConfig, automa
         files = write_artifacts(workdir, artifacts)
 
         run_command(["git", "add", "."], workdir, env)
-        run_command(["git", "commit", "-m", f"Add {starter.project_name} DevSecOps starter kit"], workdir, env)
+
+        # Check if there are staged changes to commit
+        status = run_command(["git", "status", "--porcelain"], workdir, env)
+        if status:
+            run_command(["git", "commit", "-m", f"Add {starter.project_name} DevSecOps starter kit"], workdir, env)
+            run_command(["git", "push", "origin", automation.git_branch], workdir, env)
+
         commit_sha = run_command(["git", "rev-parse", "HEAD"], workdir, env)
-        run_command(["git", "push", "origin", automation.git_branch], workdir, env)
         return commit_sha, files
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

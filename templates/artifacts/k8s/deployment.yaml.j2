@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ config.slug }}
+  namespace: {{ config.namespace }}
   labels:
     app.kubernetes.io/name: {{ config.slug }}
 spec:
@@ -14,21 +15,27 @@ spec:
       labels:
         app.kubernetes.io/name: {{ config.slug }}
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
+        runAsUser: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: {{ config.slug }}
           image: {{ config.k8s_image_name }}
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: {{ config.app_port }}
           envFrom:
             - configMapRef:
                 name: {{ config.slug }}-config
-            - secretRef:
-                name: {{ config.slug }}-secret
+          env:
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ config.slug }}-secret
+                  key: API_TOKEN
           readinessProbe:
             httpGet:
               path: /health

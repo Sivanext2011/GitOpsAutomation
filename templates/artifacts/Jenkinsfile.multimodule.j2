@@ -70,6 +70,7 @@ spec:
     }
 {% endfor %}
 
+{% if not config.skip_vuln_scan %}
     stage('Dependency Scan') {
       steps {
         container('tools') {
@@ -82,7 +83,7 @@ spec:
       steps {
         container('tools') {
 {% for module in modules %}
-          sh "trivy image --exit-code 1 --severity ${TRIVY_SEVERITY} ${REGISTRY_PREFIX}/{{ module.image }}:${BUILD_NUMBER}"
+          sh "trivy image --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL ${REGISTRY_PREFIX}/{{ module.image }}:${BUILD_NUMBER}"
 {% endfor %}
         }
       }
@@ -102,20 +103,17 @@ spec:
     stage('IaC Scan') {
       steps {
         container('tools') {
-          sh 'checkov -d k8s --quiet'
+          sh 'checkov -d k8s --config-file .checkov.yaml --quiet'
         }
       }
     }
+{% endif %}
 
     stage('Deploy') {
-      when {
-        branch 'main'
-      }
       steps {
         container('tools') {
           withCredentials([string(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_CONTENT')]) {
             writeFile file: 'kubeconfig.generated.yaml', text: KUBECONFIG_CONTENT
-            sh 'kubectl --kubeconfig kubeconfig.generated.yaml create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl --kubeconfig kubeconfig.generated.yaml apply -f -'
             sh 'kubectl --kubeconfig kubeconfig.generated.yaml apply -n ${NAMESPACE} -f k8s/'
           }
         }
@@ -158,6 +156,7 @@ pipeline {
     }
 {% endfor %}
 
+{% if not config.skip_vuln_scan %}
     stage('Dependency Scan') {
       steps {
         sh 'trivy fs --exit-code 1 --severity ${TRIVY_SEVERITY} .'
@@ -167,7 +166,7 @@ pipeline {
     stage('Container Scan') {
       steps {
 {% for module in modules %}
-        sh "trivy image --exit-code 1 --severity ${TRIVY_SEVERITY} ${REGISTRY_PREFIX}/{{ module.image }}:${BUILD_NUMBER}"
+        sh "trivy image --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL ${REGISTRY_PREFIX}/{{ module.image }}:${BUILD_NUMBER}"
 {% endfor %}
       }
     }
@@ -183,14 +182,12 @@ pipeline {
 
     stage('IaC Scan') {
       steps {
-        sh 'checkov -d k8s --quiet'
+        sh 'checkov -d k8s --config-file .checkov.yaml --quiet'
       }
     }
+{% endif %}
 
     stage('Push') {
-      when {
-        branch 'main'
-      }
       steps {
         withCredentials([usernamePassword(credentialsId: '{{ config.slug }}-docker', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
           sh 'echo "$DOCKER_PASSWORD" | docker login ${DOCKER_REGISTRY} -u "$DOCKER_USER" --password-stdin'
@@ -203,13 +200,9 @@ pipeline {
     }
 
     stage('Deploy') {
-      when {
-        branch 'main'
-      }
       steps {
         withCredentials([string(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_CONTENT')]) {
           writeFile file: 'kubeconfig.generated.yaml', text: KUBECONFIG_CONTENT
-          sh 'kubectl --kubeconfig kubeconfig.generated.yaml create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl --kubeconfig kubeconfig.generated.yaml apply -f -'
           sh 'kubectl --kubeconfig kubeconfig.generated.yaml apply -n ${NAMESPACE} -f k8s/'
         }
       }

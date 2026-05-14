@@ -2,6 +2,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ config.slug }}-default
+  namespace: {{ config.namespace }}
 spec:
   podSelector:
     matchLabels:

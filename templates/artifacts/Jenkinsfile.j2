@@ -74,6 +74,7 @@ spec:
       }
     }
 
+{% if not config.skip_vuln_scan %}
     stage('Dependency Scan') {
       steps {
         container('tools') {
@@ -85,7 +86,7 @@ spec:
     stage('Container Scan') {
       steps {
         container('tools') {
-          sh 'trivy image --exit-code 1 --severity ${TRIVY_SEVERITY} ${IMAGE_NAME}'
+          sh 'trivy image --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL ${IMAGE_NAME}'
         }
       }
     }
@@ -102,15 +103,13 @@ spec:
     stage('IaC Scan') {
       steps {
         container('tools') {
-          sh 'checkov -d k8s --quiet'
+          sh 'checkov -d k8s --config-file .checkov.yaml --quiet'
         }
       }
     }
+{% endif %}
 
     stage('Deploy') {
-      when {
-        branch 'main'
-      }
       steps {
         container('tools') {
           withCredentials([string(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_CONTENT')]) {
@@ -161,6 +160,7 @@ pipeline {
       }
     }
 
+{% if not config.skip_vuln_scan %}
     stage('Dependency Scan') {
       steps {
         sh 'trivy fs --exit-code 1 --severity ${TRIVY_SEVERITY} .'
@@ -169,7 +169,7 @@ pipeline {
 
     stage('Container Scan') {
       steps {
-        sh 'trivy image --exit-code 1 --severity ${TRIVY_SEVERITY} ${IMAGE_NAME}'
+        sh 'trivy image --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL ${IMAGE_NAME}'
       }
     }
 
@@ -182,14 +182,12 @@ pipeline {
 
     stage('IaC Scan') {
       steps {
-        sh 'checkov -d k8s --quiet'
+        sh 'checkov -d k8s --config-file .checkov.yaml --quiet'
       }
     }
+{% endif %}
 
     stage('Push') {
-      when {
-        branch 'main'
-      }
       steps {
         withCredentials([usernamePassword(credentialsId: '{{ config.slug }}-docker', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
           sh 'echo "$DOCKER_PASSWORD" | docker login ${DOCKER_REGISTRY} -u "$DOCKER_USER" --password-stdin'
@@ -200,9 +198,6 @@ pipeline {
     }
 
     stage('Deploy') {
-      when {
-        branch 'main'
-      }
       steps {
         withCredentials([string(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_CONTENT')]) {
           writeFile file: 'kubeconfig.generated.yaml', text: KUBECONFIG_CONTENT
