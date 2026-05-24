@@ -26,6 +26,7 @@ RUNTIMES: dict[str, dict[str, Any]] = {
         "label": "Python Flask",
         "port": 8000,
         "docker_template": "artifacts/dockerfile.python.j2",
+        "tools_image": "python:3.12-slim",
         "install_command": "pip install -r requirements.txt",
         "test_command": "python -m pytest",
         "build_context": ".",
@@ -34,6 +35,7 @@ RUNTIMES: dict[str, dict[str, Any]] = {
         "label": "Node.js",
         "port": 3000,
         "docker_template": "artifacts/dockerfile.node.j2",
+        "tools_image": "node:22-bookworm-slim",
         "install_command": "npm ci",
         "test_command": "npm test",
         "build_context": ".",
@@ -42,6 +44,7 @@ RUNTIMES: dict[str, dict[str, Any]] = {
         "label": "Java Spring Boot",
         "port": 8080,
         "docker_template": "artifacts/dockerfile.java.j2",
+        "tools_image": "maven:3.9.9-eclipse-temurin-21",
         "install_command": "mvn dependency:resolve",
         "test_command": "mvn test",
         "build_context": ".",
@@ -50,6 +53,7 @@ RUNTIMES: dict[str, dict[str, Any]] = {
         "label": "Go",
         "port": 8080,
         "docker_template": "artifacts/dockerfile.go.j2",
+        "tools_image": "golang:1.23-bookworm",
         "install_command": "go mod download",
         "test_command": "go test ./...",
         "build_context": ".",
@@ -97,6 +101,14 @@ class StarterKitConfig:
         return f"{registry}/{self.image_name}:latest"
 
     @property
+    def registry_host(self) -> str:
+        return docker_registry_host(self.registry)
+
+    @property
+    def docker_auth_registry(self) -> str:
+        return "https://index.docker.io/v1/" if self.registry_host in ("docker.io", "index.docker.io") else self.registry_host
+
+    @property
     def runtime_label(self) -> str:
         return RUNTIMES[self.runtime]["label"]
 
@@ -107,6 +119,10 @@ class StarterKitConfig:
     @property
     def install_command(self) -> str:
         return RUNTIMES[self.runtime]["install_command"]
+
+    @property
+    def tools_image(self) -> str:
+        return RUNTIMES[self.runtime]["tools_image"]
 
 
 @dataclass(frozen=True)
@@ -128,6 +144,10 @@ class ModuleConfig:
     @property
     def runtime_label(self) -> str:
         return RUNTIMES[self.runtime]["label"]
+
+    @property
+    def tools_image(self) -> str:
+        return RUNTIMES[self.runtime]["tools_image"]
 
 
 @dataclass(frozen=True)
@@ -165,8 +185,25 @@ def normalize_name(value: str, fallback: str) -> str:
 
 
 def normalize_registry(value: str, fallback: str) -> str:
-    cleaned = re.sub(r"[^a-zA-Z0-9_./:-]+", "-", value.strip()).strip("-./:")
+    raw = value.strip()
+    if raw.startswith(("https://", "http://")):
+        parsed = urllib.parse.urlsplit(raw)
+        path = parsed.path.strip("/")
+        if parsed.netloc == "hub.docker.com" and path.startswith("repositories/"):
+            raw = "docker.io/" + path.removeprefix("repositories/").strip("/")
+        else:
+            raw = parsed.netloc + (f"/{path}" if path else "")
+    cleaned = re.sub(r"[^a-z0-9_./:-]+", "-", raw.lower()).strip("-./:")
     return cleaned or fallback
+
+
+def normalize_image_name(value: str, fallback: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9_.-]+", "-", value.strip().lower()).strip("-._")
+    return cleaned or fallback
+
+
+def docker_registry_host(registry: str) -> str:
+    return registry.split("/")[0]
 
 
 def normalize_job_name(value: str, fallback: str) -> str:
@@ -202,13 +239,22 @@ def parse_config(form: dict[str, str]) -> tuple[StarterKitConfig | None, list[st
     if build_environment not in ("vm", "gke"):
         build_environment = "vm"
 
+    registry = normalize_registry(form.get("registry", ""), "registry.example.com/team")
+    image_name = normalize_image_name(form.get("image_name", ""), project_name.lower())
+    registry_pattern = re.compile(r"^[a-z0-9][a-z0-9._:-]*(?:/[a-z0-9][a-z0-9._-]*)*$")
+    image_name_pattern = re.compile(r"^[a-z0-9]+(?:(?:[._-]|__)[a-z0-9]+)*$")
+    if not registry_pattern.fullmatch(registry):
+        errors.append("Container registry must be a Docker image prefix such as docker.io/username, ghcr.io/org, or registry.example.com/team.")
+    if not image_name_pattern.fullmatch(image_name):
+        errors.append("Image name must use lowercase Docker image characters only.")
+
     config = StarterKitConfig(
         project_name=project_name,
         runtime=runtime,
         ci_system=ci_system,
         repository_url=form.get("repository_url", "").strip(),
-        registry=normalize_registry(form.get("registry", ""), "registry.example.com/team"),
-        image_name=normalize_name(form.get("image_name", ""), project_name.lower()),
+        registry=registry,
+        image_name=image_name,
         namespace=normalize_name(form.get("namespace", ""), "devsecops"),
         app_port=app_port,
         replicas=replicas,
@@ -238,8 +284,9 @@ def parse_automation_config(form: dict[str, str], starter: StarterKitConfig) -> 
         "Jenkins API token": form.get("jenkins_token", "").strip(),
         "Docker username": form.get("docker_username", "").strip(),
         "Docker password/token": form.get("docker_password", "").strip(),
-        "Kubeconfig": form.get("kubeconfig", "").strip(),
     }
+    if starter.build_environment != "gke":
+        required["Kubeconfig"] = form.get("kubeconfig", "").strip()
     for label, value in required.items():
         if not value:
             errors.append(f"{label} is required for full automation.")
@@ -260,7 +307,7 @@ def parse_automation_config(form: dict[str, str], starter: StarterKitConfig) -> 
         jenkins_username=form.get("jenkins_username", "").strip(),
         jenkins_token=form.get("jenkins_token", "").strip(),
         jenkins_job_name=normalize_job_name(form.get("jenkins_job_name", ""), starter.slug),
-        docker_registry_host=form.get("docker_registry_host", "").strip() or starter.registry.split("/")[0],
+        docker_registry_host=form.get("docker_registry_host", "").strip() or docker_registry_host(starter.registry),
         docker_username=form.get("docker_username", "").strip(),
         docker_password=form.get("docker_password", "").strip(),
         kubeconfig=form.get("kubeconfig", "").strip(),
@@ -290,7 +337,7 @@ def parse_modules(form: dict[str, str]) -> list[ModuleConfig]:
             port = int(ports[i]) if i < len(ports) and ports[i] else RUNTIMES[runtime]["port"]
         except ValueError:
             port = RUNTIMES[runtime]["port"]
-        image = normalize_name(images[i] if i < len(images) else "", name)
+        image = normalize_image_name(images[i] if i < len(images) else "", name.lower())
         modules.append(ModuleConfig(name=name, runtime=runtime, path=path, port=port, image=image))
     return modules
 
@@ -316,6 +363,8 @@ def render_artifacts(config: StarterKitConfig, modules: list[ModuleConfig] | Non
 
     if config.ci_system == "jenkins":
         artifacts[CI_SYSTEMS[config.ci_system]] = render_template("artifacts/Jenkinsfile.j2", **context)
+        if config.build_environment == "gke":
+            artifacts["jenkins/agent-rbac.yaml"] = render_template("artifacts/jenkins-agent-rbac.yaml.j2", **context)
     else:
         artifacts[CI_SYSTEMS[config.ci_system]] = render_template("artifacts/github-actions.yml.j2", **context)
 
@@ -360,6 +409,8 @@ def render_multimodule_artifacts(config: StarterKitConfig, modules: list[ModuleC
     # Unified pipeline
     if config.ci_system == "jenkins":
         artifacts["Jenkinsfile"] = render_template("artifacts/Jenkinsfile.multimodule.j2", **context)
+        if config.build_environment == "gke":
+            artifacts["jenkins/agent-rbac.yaml"] = render_template("artifacts/jenkins-agent-rbac.yaml.j2", **context)
     else:
         artifacts[CI_SYSTEMS[config.ci_system]] = render_template("artifacts/github-actions.yml.j2", **context)
 
@@ -493,6 +544,18 @@ def get_jenkins_crumb(automation: AutomationConfig) -> dict[str, str] | None:
     return json.loads(body.decode("utf-8"))
 
 
+def run_jenkins_script(automation: AutomationConfig, script: str) -> str:
+    data = urllib.parse.urlencode({"script": script}).encode("utf-8")
+    body = jenkins_request(
+        automation,
+        "/scriptText",
+        method="POST",
+        data=data,
+        content_type="application/x-www-form-urlencoded",
+    )
+    return body.decode("utf-8", errors="replace").strip()
+
+
 def credential_xml(credential_id: str, description: str, username: str | None = None, secret: str = "") -> bytes:
     import html
 
@@ -535,6 +598,60 @@ def create_or_update_credential(
         data=data,
         content_type="application/xml",
     )
+
+
+def configure_jenkins_kubernetes_cloud(starter: StarterKitConfig, automation: AutomationConfig) -> None:
+    """Create the Jenkins Kubernetes cloud used by generated GKE pipelines."""
+    import json
+
+    cloud_name = "kubernetes"
+    fallback_namespace = starter.namespace
+    script = f"""
+import jenkins.model.Jenkins
+import org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud
+
+def jenkins = Jenkins.get()
+def cloudName = {json.dumps(cloud_name)}
+def fallbackNamespace = {json.dumps(fallback_namespace)}
+def namespace = System.getenv('POD_NAMESPACE') ?: System.getenv('KUBERNETES_NAMESPACE')
+if (!namespace) {{
+  def namespaceFile = new File('/var/run/secrets/kubernetes.io/serviceaccount/namespace')
+  namespace = namespaceFile.exists() ? namespaceFile.text.trim() : fallbackNamespace
+}}
+
+def cloud = jenkins.clouds.getByName(cloudName)
+if (cloud == null) {{
+  cloud = new KubernetesCloud(cloudName)
+  jenkins.clouds.add(cloud)
+}}
+
+def callIfAvailable = {{ target, methodName, value ->
+  if (target.metaClass.respondsTo(target, methodName, value)) {{
+    target."$methodName"(value)
+  }}
+}}
+
+callIfAvailable(cloud, 'setServerUrl', 'https://kubernetes.default.svc')
+callIfAvailable(cloud, 'setNamespace', namespace)
+callIfAvailable(cloud, 'setSkipTlsVerify', false)
+callIfAvailable(cloud, 'setCredentialsId', null)
+callIfAvailable(cloud, 'setContainerCapStr', '10')
+callIfAvailable(cloud, 'setConnectTimeout', 30)
+callIfAvailable(cloud, 'setReadTimeout', 60)
+callIfAvailable(cloud, 'setUsageRestricted', false)
+callIfAvailable(cloud, 'setWebSocket', true)
+
+jenkins.save()
+println("Configured Kubernetes cloud '" + cloudName + "' in namespace '" + namespace + "'.")
+"""
+    try:
+        run_jenkins_script(automation, script)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "Could not configure Jenkins Kubernetes cloud automatically. "
+            "Make sure the Jenkins Kubernetes plugin is installed and the Jenkins API user has Overall/Administer permission. "
+            f"Original error: {exc}"
+        ) from exc
 
 
 def jenkins_job_xml(starter: StarterKitConfig, automation: AutomationConfig) -> bytes:
@@ -628,7 +745,10 @@ def create_or_update_file_credential(
 def create_or_update_jenkins_job(starter: StarterKitConfig, automation: AutomationConfig) -> str:
     create_or_update_credential(automation, f"{starter.slug}-git", "Git token for generated DevSecOps job", automation.git_username, automation.git_token)
     create_or_update_credential(automation, f"{starter.slug}-docker", "Docker registry credentials", automation.docker_username, automation.docker_password)
-    create_or_update_credential(automation, f"{starter.slug}-kubeconfig", "Kubernetes kubeconfig", None, automation.kubeconfig)
+    if automation.kubeconfig:
+        create_or_update_credential(automation, f"{starter.slug}-kubeconfig", "Kubernetes kubeconfig", None, automation.kubeconfig)
+    if starter.build_environment == "gke":
+        configure_jenkins_kubernetes_cloud(starter, automation)
 
     job_name = urllib.parse.quote(automation.jenkins_job_name, safe="")
     config_xml = jenkins_job_xml(starter, automation)

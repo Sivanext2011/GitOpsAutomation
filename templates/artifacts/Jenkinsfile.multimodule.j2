@@ -6,6 +6,8 @@ pipeline {
 apiVersion: v1
 kind: Pod
 spec:
+  serviceAccountName: default
+  automountServiceAccountToken: true
   containers:
   - name: jnlp
     image: jenkins/inbound-agent:latest
@@ -17,20 +19,23 @@ spec:
     - name: docker-config
       mountPath: /kaniko/.docker
   - name: tools
+    image: {{ config.tools_image }}
+    command: ["sleep"]
+    args: ["infinity"]
+  - name: kubectl
     image: alpine:3.20
     command: ["sleep"]
     args: ["infinity"]
   volumes:
   - name: docker-config
-    secret:
-      secretName: {{ config.slug }}-docker-config
-      optional: true
+    emptyDir: {}
 '''
     }
   }
 
   environment {
-    DOCKER_REGISTRY = "{{ config.registry.split('/')[0] }}"
+    DOCKER_REGISTRY = "{{ config.registry_host }}"
+    DOCKER_AUTH_REGISTRY = "{{ config.docker_auth_registry }}"
     REGISTRY_PREFIX = "{{ config.registry.rstrip('/') }}"
     NAMESPACE = "{{ config.namespace }}"
     TRIVY_SEVERITY = "{{ config.severity_gate }}"
@@ -61,9 +66,11 @@ spec:
           withCredentials([usernamePassword(credentialsId: '{{ config.slug }}-docker', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
             sh '''
               mkdir -p /kaniko/.docker
-              echo "{\"auths\":{\"${DOCKER_REGISTRY}\":{\"username\":\"${DOCKER_USER}\",\"password\":\"${DOCKER_PASSWORD}\"}}}" > /kaniko/.docker/config.json
+              cat > /kaniko/.docker/config.json <<EOF
+{"auths":{"${DOCKER_AUTH_REGISTRY}":{"username":"${DOCKER_USER}","password":"${DOCKER_PASSWORD}"}}}
+EOF
             '''
-            sh "/kaniko/executor --context=${WORKSPACE}/{{ module.path }} --dockerfile=${WORKSPACE}/{{ module.path }}/Dockerfile --destination=${REGISTRY_PREFIX}/{{ module.image }}:${BUILD_NUMBER} --destination=${REGISTRY_PREFIX}/{{ module.image }}:latest"
+            sh '/kaniko/executor --context=${WORKSPACE}/{{ module.path }} --dockerfile=${WORKSPACE}/{{ module.path }}/Dockerfile --destination=${REGISTRY_PREFIX}/{{ module.image }}:${BUILD_NUMBER} --destination=${REGISTRY_PREFIX}/{{ module.image }}:latest'
           }
         }
       }
@@ -111,15 +118,20 @@ spec:
 
     stage('Deploy') {
       steps {
-        container('tools') {
-          withCredentials([string(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_CONTENT')]) {
+        container('kubectl') {
+          timeout(time: 3, unit: 'MINUTES') {
             sh '''
-              set +x
-              printenv KUBECONFIG_CONTENT > kubeconfig.generated.yaml
-              set -x
-              kubectl --kubeconfig kubeconfig.generated.yaml create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl --kubeconfig kubeconfig.generated.yaml apply --validate=false -f -
-              kubectl --kubeconfig kubeconfig.generated.yaml apply -n ${NAMESPACE} -f k8s/generated/
-              rm -f kubeconfig.generated.yaml
+              set -eux
+              trap 'rm -f kubeconfig.incluster.yaml' EXIT
+              apk add --no-cache kubectl
+              SA_DIR=/var/run/secrets/kubernetes.io/serviceaccount
+              kubectl config --kubeconfig kubeconfig.incluster.yaml set-cluster in-cluster --server=https://kubernetes.default.svc --certificate-authority=${SA_DIR}/ca.crt --embed-certs=true
+              kubectl config --kubeconfig kubeconfig.incluster.yaml set-credentials jenkins-agent --token="$(cat ${SA_DIR}/token)"
+              kubectl config --kubeconfig kubeconfig.incluster.yaml set-context in-cluster --cluster=in-cluster --user=jenkins-agent
+              kubectl config --kubeconfig kubeconfig.incluster.yaml use-context in-cluster
+              kubectl --kubeconfig kubeconfig.incluster.yaml version --client=true
+              kubectl --kubeconfig kubeconfig.incluster.yaml --request-timeout=30s get namespace ${NAMESPACE} || kubectl --kubeconfig kubeconfig.incluster.yaml --request-timeout=30s create namespace ${NAMESPACE}
+              kubectl --kubeconfig kubeconfig.incluster.yaml --request-timeout=30s apply -n ${NAMESPACE} --validate=false -f k8s/generated/
             '''
           }
         }
@@ -132,7 +144,7 @@ pipeline {
   agent any
 
   environment {
-    DOCKER_REGISTRY = "{{ config.registry.split('/')[0] }}"
+    DOCKER_REGISTRY = "{{ config.registry_host }}"
     REGISTRY_PREFIX = "{{ config.registry.rstrip('/') }}"
     NAMESPACE = "{{ config.namespace }}"
     TRIVY_SEVERITY = "{{ config.severity_gate }}"

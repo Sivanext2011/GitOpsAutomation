@@ -6,6 +6,8 @@ pipeline {
 apiVersion: v1
 kind: Pod
 spec:
+  serviceAccountName: default
+  automountServiceAccountToken: true
   containers:
   - name: jnlp
     image: jenkins/inbound-agent:latest
@@ -17,14 +19,16 @@ spec:
     - name: docker-config
       mountPath: /kaniko/.docker
   - name: tools
+    image: {{ config.tools_image }}
+    command: ["sleep"]
+    args: ["infinity"]
+  - name: kubectl
     image: alpine:3.20
     command: ["sleep"]
     args: ["infinity"]
   volumes:
   - name: docker-config
-    secret:
-      secretName: {{ config.slug }}-docker-config
-      optional: true
+    emptyDir: {}
 '''
     }
   }
@@ -32,7 +36,8 @@ spec:
   environment {
     IMAGE_NAME = "{{ config.registry.rstrip('/') }}/{{ config.image_name }}:${BUILD_NUMBER}"
     LATEST_IMAGE = "{{ config.k8s_image_name }}"
-    DOCKER_REGISTRY = "{{ config.registry.split('/')[0] }}"
+    DOCKER_REGISTRY = "{{ config.registry_host }}"
+    DOCKER_AUTH_REGISTRY = "{{ config.docker_auth_registry }}"
     NAMESPACE = "{{ config.namespace }}"
     TRIVY_SEVERITY = "{{ config.severity_gate }}"
   }
@@ -66,9 +71,11 @@ spec:
           withCredentials([usernamePassword(credentialsId: '{{ config.slug }}-docker', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
             sh '''
               mkdir -p /kaniko/.docker
-              echo "{\"auths\":{\"${DOCKER_REGISTRY}\":{\"username\":\"${DOCKER_USER}\",\"password\":\"${DOCKER_PASSWORD}\"}}}" > /kaniko/.docker/config.json
+              cat > /kaniko/.docker/config.json <<EOF
+{"auths":{"${DOCKER_AUTH_REGISTRY}":{"username":"${DOCKER_USER}","password":"${DOCKER_PASSWORD}"}}}
+EOF
             '''
-            sh "/kaniko/executor --context=${WORKSPACE} --dockerfile=${WORKSPACE}/Dockerfile --destination=${IMAGE_NAME} --destination=${LATEST_IMAGE}"
+            sh '/kaniko/executor --context=${WORKSPACE} --dockerfile=${WORKSPACE}/Dockerfile --destination=${IMAGE_NAME} --destination=${LATEST_IMAGE}'
           }
         }
       }
@@ -111,12 +118,21 @@ spec:
 
     stage('Deploy') {
       steps {
-        container('tools') {
-          withCredentials([string(credentialsId: '{{ config.slug }}-kubeconfig', variable: 'KUBECONFIG_CONTENT')]) {
-            writeFile file: 'kubeconfig.generated.yaml', text: KUBECONFIG_CONTENT
-            sh 'kubectl --kubeconfig kubeconfig.generated.yaml create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl --kubeconfig kubeconfig.generated.yaml apply --validate=false -f -'
-            sh 'kubectl --kubeconfig kubeconfig.generated.yaml apply -n ${NAMESPACE} -f k8s/generated/'
-            sh 'rm -f kubeconfig.generated.yaml'
+        container('kubectl') {
+          timeout(time: 3, unit: 'MINUTES') {
+            sh '''
+              set -eux
+              trap 'rm -f kubeconfig.incluster.yaml' EXIT
+              apk add --no-cache kubectl
+              SA_DIR=/var/run/secrets/kubernetes.io/serviceaccount
+              kubectl config --kubeconfig kubeconfig.incluster.yaml set-cluster in-cluster --server=https://kubernetes.default.svc --certificate-authority=${SA_DIR}/ca.crt --embed-certs=true
+              kubectl config --kubeconfig kubeconfig.incluster.yaml set-credentials jenkins-agent --token="$(cat ${SA_DIR}/token)"
+              kubectl config --kubeconfig kubeconfig.incluster.yaml set-context in-cluster --cluster=in-cluster --user=jenkins-agent
+              kubectl config --kubeconfig kubeconfig.incluster.yaml use-context in-cluster
+              kubectl --kubeconfig kubeconfig.incluster.yaml version --client=true
+              kubectl --kubeconfig kubeconfig.incluster.yaml --request-timeout=30s get namespace ${NAMESPACE} || kubectl --kubeconfig kubeconfig.incluster.yaml --request-timeout=30s create namespace ${NAMESPACE}
+              kubectl --kubeconfig kubeconfig.incluster.yaml --request-timeout=30s apply -n ${NAMESPACE} --validate=false -f k8s/generated/
+            '''
           }
         }
       }
@@ -130,7 +146,7 @@ pipeline {
   environment {
     IMAGE_NAME = "{{ config.registry.rstrip('/') }}/{{ config.image_name }}:${BUILD_NUMBER}"
     LATEST_IMAGE = "{{ config.k8s_image_name }}"
-    DOCKER_REGISTRY = "{{ config.registry.split('/')[0] }}"
+    DOCKER_REGISTRY = "{{ config.registry_host }}"
     NAMESPACE = "{{ config.namespace }}"
     TRIVY_SEVERITY = "{{ config.severity_gate }}"
   }

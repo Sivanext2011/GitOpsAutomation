@@ -24,6 +24,7 @@ The generated starter kit is intended to help teams bootstrap a secure delivery 
 - Packages generated files as a downloadable ZIP.
 - Can push generated files to Git and configure Jenkins automatically.
 - Creates Jenkins credentials for Git, Docker registry access, and Kubernetes kubeconfig.
+- Creates the Jenkins Kubernetes cloud automatically for GKE/Kubernetes build mode.
 
 ## 3. Technology Stack
 
@@ -165,9 +166,10 @@ Main behavior:
 5. Writes generated CI/CD files into the repository.
 6. Commits and pushes changes when needed.
 7. Creates or updates Jenkins credentials.
-8. Creates or updates the Jenkins Pipeline job.
-9. Optionally triggers a Jenkins build.
-10. Shows the result page with repository, branch, commit, Jenkins job URL, and pushed files.
+8. For GKE/Kubernetes build mode, creates or updates the Jenkins Kubernetes cloud.
+9. Creates or updates the Jenkins Pipeline job.
+10. Optionally triggers a Jenkins build.
+11. Shows the result page with repository, branch, commit, Jenkins job URL, and pushed files.
 
 Full automation currently requires Jenkins as the selected CI system.
 
@@ -404,9 +406,16 @@ Typical containers:
 
 - `jnlp` for Jenkins agent communication
 - `kaniko` for image build and push
-- `tools` for test, scan, SBOM, Checkov, and kubectl commands
+- `tools` for install, test, scan, SBOM, Checkov, and kubectl commands
+- `kubectl` for Kubernetes deployment commands
 
 This mode is designed for clusters where Docker daemon access is not available or not preferred.
+
+Full automation creates or updates a Jenkins Kubernetes cloud named `kubernetes` for this mode. The cloud uses the in-cluster Kubernetes API endpoint `https://kubernetes.default.svc`, detects the Jenkins pod namespace when possible, and enables WebSocket agents so TCP port `50000` does not need to be exposed. GKE mode deploys with the Jenkins agent pod service account, avoiding local-user kubeconfigs that require `gke-gcloud-auth-plugin`.
+
+GKE/Kubernetes generated kits also include `jenkins/agent-rbac.yaml`, which grants the Jenkins service account permission to create, list, watch, and delete agent pods in the `jenkins` namespace. This manifest must be applied by a Kubernetes identity with RBAC administration permission.
+
+The generated `tools` container is runtime-specific. Python projects use `python:3.12-slim`, Node.js projects use `node:22-bookworm-slim`, Java projects use `maven:3.9.9-eclipse-temurin-21`, and Go projects use `golang:1.23-bookworm`. Deployment runs in a separate `alpine:3.20` container, installs `kubectl` during the deploy stage, and creates an in-cluster kubeconfig from the mounted Jenkins agent service account token.
 
 ## 13. GitHub Actions Pipeline Behavior
 
@@ -441,8 +450,9 @@ High-level flow:
 6. Stage all changes.
 7. Commit and push if changes exist.
 8. Create or update Jenkins credentials.
-9. Create or update the Jenkins Pipeline job.
-10. Trigger the build if requested.
+9. For GKE/Kubernetes build mode, create or update the Jenkins Kubernetes cloud.
+10. Create or update the Jenkins Pipeline job.
+11. Trigger the build if requested.
 
 The temporary repository is created using `tempfile.mkdtemp()` and removed after the operation with `shutil.rmtree()`.
 
@@ -454,9 +464,11 @@ Full automation creates or replaces three Jenkins credentials:
 | --- | --- | --- |
 | `<project-slug>-git` | Username/password | Allows Jenkins to clone the Git repository. |
 | `<project-slug>-docker` | Username/password | Allows the pipeline to log in to the Docker registry. |
-| `<project-slug>-kubeconfig` | Secret text | Stores kubeconfig content for deployment. |
+| `<project-slug>-kubeconfig` | Secret text | Stores kubeconfig content for VM mode or external-cluster deployment. |
 
 The Jenkins job is configured as a Pipeline job that reads `Jenkinsfile` from SCM.
+
+For GKE/Kubernetes mode, the Jenkins API user must have Overall/Administer permission because the app configures the Kubernetes cloud through Jenkins' script endpoint. Jenkins must have the Kubernetes plugin installed, and the Jenkins pod's service account must be allowed to create agent pods.
 
 ## 16. Input Validation and Normalization
 
@@ -466,6 +478,9 @@ Examples:
 
 - Project names are normalized with `normalize_name()`.
 - Registry values are normalized with `normalize_registry()`.
+- Docker Hub browser URLs such as `https://hub.docker.com/repositories/<user>` are converted to image prefixes such as `docker.io/<user>`.
+- Image names are normalized to lowercase Docker-safe names.
+- Docker Hub pushes use the Docker Hub auth endpoint `https://index.docker.io/v1/` while keeping image destinations in `docker.io/<user>/<image>` form.
 - Jenkins job names are normalized with `normalize_job_name()`.
 - Ports must be between `1` and `65535`.
 - Replicas must be between `1` and `10`.

@@ -69,7 +69,7 @@
             <div class="grid">
               <label>
                 <span>Container registry</span>
-                <input name="registry" value="registry.example.com/platform">
+                <input name="registry" value="docker.io/your-dockerhub-user">
               </label>
               <label>
                 <span>Image name</span>
@@ -170,7 +170,7 @@
             <div class="grid">
               <label>
                 <span>Docker registry host</span>
-                <input name="docker_registry_host" placeholder="registry.example.com">
+                <input name="docker_registry_host" placeholder="docker.io">
               </label>
               <label>
                 <span>Docker username</span>
@@ -182,7 +182,7 @@
               </label>
           <label class="wide">
                 <span>Kubernetes kubeconfig</span>
-                <textarea name="kubeconfig" rows="8" spellcheck="false" placeholder="Paste kubeconfig YAML here"></textarea>
+                <textarea name="kubeconfig" rows="8" spellcheck="false" placeholder="Required for VM mode or external clusters. GKE mode deploys with the Jenkins pod service account."></textarea>
               </label>
             </div>
           </section>
